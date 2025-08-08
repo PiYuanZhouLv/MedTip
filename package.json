@@ -1,0 +1,12 @@
+{
+    "name": "MedTip",
+    "main": "MedTip.html",
+    "window": {
+        "frame": false,
+        "transparent": true,
+        "width": 400,
+        "always_on_top": true,
+        "resizable": false,
+        "show_in_taskbar": false
+    }
+}

@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="zh">
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1.0">
+    <title>MedTip</title>
+    <style>
+        html {
+            background-color: transparent;
+        }
+
+        body {
+            overflow: hidden;
+        }
+
+        #outer {
+            text-align: center;
+            background: linear-gradient(135deg, hsl(120deg 100% 69.87%), hsl(70deg 100% 85.69%));
+            border-radius: 20px;
+            padding: 10px;
+            font-size: 20px;
+            font-family: 霞鹜文楷 GB;
+            -webkit-app-region: drag;
+            -moz-user-select: none;
+            -webkit-user-select: none;
+            user-select: none;
+        }
+
+        #outer>div {
+            display: grid;
+            margin: 5px;
+            grid-template-columns: 1fr 1fr 1fr;
+            border-radius: 5px;
+        }
+
+        button {
+            /* background-color: white;
+            border-color: green; */
+            background-color: transparent;
+            border: none;
+            color: green;
+            /* border-radius: 5px; */
+            -webkit-app-region: no-drag;
+            font-family: inherit;
+            font-size: 15px;
+        }
+
+        button:hover {
+            opacity: 0.75;
+            text-decoration: underline;
+        }
+
+        @keyframes blink {
+            0% {
+                opacity: 1;
+                border: red solid 1px;
+            }
+
+            50% {
+                opacity: 0.3;
+                border: red solid 1px;
+            }
+
+            100% {
+                opacity: 1;
+                border: red solid 1px;
+            }
+        }
+
+        @keyframes exit {
+            0% {
+                opacity: 1;
+                right: 0;
+                position: relative;
+            }
+
+            100% {
+                opacity: 0;
+                right: 100vw;
+                position: relative;
+            }
+        }
+
+        @keyframes enter {
+            0% {
+                position: relative;
+                opacity: 0;
+                bottom: -1em;
+            }
+
+            100% {
+                position: relative;
+                opacity: 1;
+                bottom: 0;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div id="outer">
+        <div style="font-size: 25px; border-bottom: black solid 1px; border-radius: 0; margin: 0; text-align: left;">
+            <span><b>服药提醒</b></span>
+            <void></void>
+            <span id="time" style="text-align: right;"></span>
+        </div>
+        <!-- <div medid="0"><span>8点</span><span>泼尼松</span><button onclick="remove(0)">已服用✔</button></div> -->
+        <div id="tip" style="font-size: 15px; display: block; margin: 0;">暂时没有要服用的药啦~</div>
+    </div>
+    <script>
+        win = nw.Window.get()
+
+        // Define Medicine ///////////////////////////////////////////////
+
+        const every_day = () => (true)
+        const on_weekday = (day) => (() => (day.split('').map(v => ('日一二三四五六'.indexOf(v))).includes(new Date().getDay())))
+        const MedicineList = [
+            //  [ConstMEDID[0], 'name'[1], show[2:4], tip[4:6], 'human'[6], filter()[7]]
+            [6, '外用药', 7, 0, 7, 25, '起床后', every_day],
+            [0, '奥美拉唑', 7, 0, 7, 25, '起床后', every_day],
+            [1, '大白片', 7, 0, 7, 25, '起床后', on_weekday('一二三四')],
+            [2, '钙片', 7, 40, 7, 45, '早餐后', every_day],
+            [3, '泼尼松', 7, 50, 8, 0, '8:00', every_day],
+            [4, '泼尼松', 19, 50, 20, 0, '20:00', every_day],
+            [5, '钙片', 21, 50, 22, 0, '睡前', every_day],
+            [7, '外用药', 21, 50, 22, 0, '睡前', every_day],
+        ] // Next ConstMEDID: 8
+
+
+        // About Record ///////////////////////////////////////////////////////
+
+        const fs = require('fs')
+        const isSameDay = (d1, d2) => ['getFullYear', 'getMonth', 'getDate'].map(fn => { return d1[fn]() === d2[fn]() }).every(v => { return v })
+        if (!fs.existsSync('medicine-record.txt')) {
+            recordedToday = []
+        } else {
+            record = JSON.parse(fs.readFileSync('medicine-record.txt', 'utf-8'))
+            recordDate = new Date(record['time'])
+            if (isSameDay(recordDate, new Date())) {
+                recordedToday = record['recorded']
+            } else {
+                recordedToday = []
+            }
+        }
+        function save_record() {
+            fs.writeFileSync('medicine-record.txt', JSON.stringify({ 'time': Date.now(), 'recorded': recordedToday.filter(r => (r >= 0)) }), 'utf-8')
+        }
+
+
+        // Medicine-Related UI Function ///////////////////////////////////////////////
+
+        function getDivByMedid(medid) { return new Array(...document.getElementsByTagName('div')).filter(div => { return div.getAttribute('medid') == medid })[0] };
+        function remove(medid) {
+            getDivByMedid(medid).style.color = 'green';
+            getDivByMedid(medid).style.background = ''
+            getDivByMedid(medid).style.backgroundColor = '#96ff96'
+            getDivByMedid(medid).style.animation = 'exit 1s 1 forwards';
+            setTimeout(() => {
+                getDivByMedid(medid).remove()
+                delete tmp_cst_map[medid]
+                if (!Object.keys(tmp_cst_map).length) {
+                    document.getElementById('tip').style.display = 'block'
+                    document.getElementById('tip').style.animation = 'enter 1s 1 none'
+                }
+                if (!Object.keys(tmp_cst_map).filter((medid) => (!waiting_list.map((v) => (v[1].toString())).includes(medid))).length) {
+                    stopBouncing()
+                }
+                win.setResizable(true)
+                win.setInnerHeight(document.body.offsetHeight + 16)
+                win.setResizable(false)
+            }, 1000)
+            recordedToday.push(tmp_cst_map[medid])
+            save_record()
+        };
+        var newid = 1;
+        var tmp_cst_map = {}
+        function addMedTip(name, time, tip, cstID) {
+            var medid = newid;
+            tmp_cst_map[medid] = cstID
+            newid++;
+            div = document.createElement('div');
+            div.setAttribute('medid', medid);
+            span1 = document.createElement('span');
+            span1.innerText = tip;
+            div.appendChild(span1);
+            span2 = document.createElement('span');
+            span2.innerText = name;
+            div.appendChild(span2);
+            btn = document.createElement('button');
+            btn.innerText = '我已服用✔';
+            btn.onclick = () => { remove(medid) };
+            div.appendChild(btn);
+            div.style.animation = 'enter 1s 1 none';
+            document.getElementById('tip').style.display = 'none'
+            document.getElementById('outer').insertBefore(div, document.getElementById('tip'))
+            waiting_list.push([time, medid])
+            win.setResizable(true)
+            win.setInnerHeight(document.body.offsetHeight + 16)
+            win.setResizable(false)
+        };
+        var waiting_list = [];
+        setInterval(() => {
+            waiting_list = waiting_list.filter(v => {
+                if (Date.now() >= v[0]) {
+                    if (!getDivByMedid(v[1])) {
+                        return false
+                    }
+                    getDivByMedid(v[1]).style.color = 'red';
+                    getDivByMedid(v[1]).style.animation = "blink 1s infinite linear"
+                    bounceAround()
+                    return false
+                } else {
+                    return true
+                }
+            })
+        }, 1000);
+        var wait_for_show = []
+        get_today = (h, m) => { var d = new Date(); d.setHours(h, m, 0); return d }
+        function check_medicine_at_once() {
+            for (let i in MedicineList) {
+                medicine = MedicineList[i]
+                if (!medicine[7]()) {
+                    continue
+                }
+                if (!recordedToday.includes(medicine[0])) {
+                    if (get_today(...medicine.slice(2, 4)) <= new Date()) {
+                        addMedTip(medicine[1], get_today(...medicine.slice(4, 6)), medicine[6], medicine[0])
+                    } else {
+                        wait_for_show.push([get_today(...medicine.slice(2, 4)), medicine[1], get_today(...medicine.slice(4, 6)), medicine[6], medicine[0]])
+                    }
+                }
+            }
+        }
+        check_medicine_at_once()
+        setInterval(() => {
+            wait_for_show = wait_for_show.filter(v => {
+                if (v[0] <= new Date()) {
+                    addMedTip(...v.slice(1))
+                    return false
+                } else {
+                    return true
+                }
+            })
+        }, 1000)
+
+
+        // Check New Day /////////////////////////////////////////////////////
+
+        var current_day = new Date()
+        function checkNewDay() {
+            if (!isSameDay(current_day, new Date())) {
+                current_day = new Date()
+                !(new Array(...document.getElementsByTagName('div')).filter(div => { return div.hasAttribute('medid') })).forEach(div => { div.remove() })
+                tmp_cst_map = {}
+                recordedToday = []
+                wait_for_show = []
+                waiting_list = []
+                check_medicine_at_once()
+            }
+        }
+        setInterval(checkNewDay, 1000)
+
+
+        // Bouncing Around /////////////////////////////////////////////////////
+
+        var bounceIntervalID
+        var mouseIn = false
+        function asleep(t) {
+            return new Promise((resolve) => { setTimeout(resolve, t) })
+        }
+        async function bounceAround() {
+            if (bounceIntervalID) { return }
+            document.getElementById('outer').style.webkitAppRegion = 'no-drag'
+            var pos = [win.x, win.y]
+            var vec = ((a) => ([Math.cos(a), Math.sin(a)]))(2 * Math.PI * Math.random())
+            const arr_plus = (arr1, arr2) => (arr1.map((v, i) => (v + arr2[i])))
+            const arr_minus = (arr1, arr2) => (arr1.map((v, i) => (v - arr2[i])))
+            const arr_multiple = (arr, lambda) => (arr.map((v) => (v * lambda)))
+            const timedelta = 1 / 30
+            bounceIntervalID = setInterval(() => {
+                if (!mouseIn) {
+                    pos = arr_plus(pos, arr_multiple(vec, timedelta * 50))
+                    x_bound = [nw.Screen.screens[0].work_area.x, nw.Screen.screens[0].work_area.x + nw.Screen.screens[0].work_area.width - win.width]
+                    y_bound = [nw.Screen.screens[0].work_area.y, nw.Screen.screens[0].work_area.y + nw.Screen.screens[0].work_area.height - win.height]
+                    if (pos[0] < x_bound[0] || pos[0] > x_bound[1]) {
+                        vec[0] *= -1
+                    }
+                    if (pos[1] < y_bound[0] || pos[1] > y_bound[1]) {
+                        vec[1] *= -1
+                    }
+                    win.moveTo(parseInt(pos[0]), parseInt(pos[1]))
+                }
+            }, timedelta)
+        }
+        function stopBouncing() {
+            if (bounceIntervalID) {
+                clearInterval(bounceIntervalID)
+                bounceIntervalID = null
+                document.getElementById('outer').style.webkitAppRegion = 'drag'
+            }
+        }
+        document.getElementById('outer').addEventListener('mouseenter', () => {
+            mouseIn = true
+        })
+        document.getElementById('outer').addEventListener('mouseleave', () => {
+            mouseIn = false
+        })
+        document.getElementById('outer').addEventListener('dblclick', stopBouncing)
+
+
+        // Other UI ////////////////////////////////////////////////////////////
+
+        function UI_Update() {
+            document.getElementById("time").innerText = `${new Date().getHours()}:${new Date().getMinutes() < 10 ? '0' + new Date().getMinutes() : new Date().getMinutes()}`
+            document.getElementById('outer').style.background = `linear-gradient(135deg, hsl(${Date.now() % (24 * 60 * 60 * 1000) / (24 * 60 * 60 * 1000) * 360}deg 100% 69.87%), hsl(${(Date.now() % (24 * 60 * 60 * 1000) / (24 * 60 * 60 * 1000) * 360 - 50 + 360) % 360}deg 100% 85.69%))`
+            if (!Object.keys(tmp_cst_map).length) {
+                document.getElementById('tip').innerText = wait_for_show.length ? [`暂时没有要服用的药啦~`, `今天还有 ${wait_for_show.length} 种药要服用`, `下一项药物出现：${((t) => { dt = t - Date.now(); if (dt > 3 * 60 * 60 * 1000) { var td = new Date(t); return td.getHours() + ':' + td.getMinutes().toString().padStart(2, '0') } else if (dt > 60 * 60 * 1000) { return (Math.ceil(dt / (60 * 60 * 1000) * 10) / 10).toFixed(1) + 'h后' } else if (dt > 60 * 1000) { return Math.floor(dt / (60 * 1000)) + ':' + Math.floor(dt % (60 * 1000) / 1000).toString().padStart(2, '0') + '后' } else { return Math.ceil(dt / 1000) + 's后' } })(Math.min(...wait_for_show.map((m) => (m[0]))))}`][Math.floor(Date.now() / (10 * 1000)) % 3] : '今天没有要服用的药啦~'
+            } else {
+                Object.keys(tmp_cst_map).map((medid) => {
+                    percent = ((Date.now() - get_today(...MedicineList.filter(m => { return m[0] == tmp_cst_map[medid] })[0].slice(2, 4)).getTime()) / (get_today(...MedicineList.filter(m => { return m[0] == tmp_cst_map[medid] })[0].slice(4, 6)) - get_today(...MedicineList.filter(m => { return m[0] == tmp_cst_map[medid] })[0].slice(2, 4))) * 100)
+                    if (percent < 100) {
+                        getDivByMedid(medid).style.background = `linear-gradient(90deg, #96ff96 0 ${100 - percent}%, transparent ${100 - Math.min(percent + 10, 100)}% 100%)`
+                    } else if (percent < 200) {
+                        getDivByMedid(medid).style.background = `linear-gradient(90deg, #ffeb96 0 ${percent - 100}%, transparent ${Math.min(percent - 100 + 10, 100)}% 100%)`
+                    } else {
+                        getDivByMedid(medid).style.background = `linear-gradient(90deg, #ff9696 0 ${Math.min(percent - 200, 100)}%, #ffeb96 ${Math.min(percent - 200 + 10, 100)}% 100%)`
+                    }
+                })
+            }
+            win.setResizable(true)
+            win.setInnerHeight(document.body.offsetHeight + 16)
+            win.setResizable(false)
+        }
+        UI_Update()
+        setInterval(UI_Update, 1000)
+        win.on('minimize', () => {
+            win.restore()
+        })
+        nw.Screen.Init()
+        limit = (value, lim) => { return Math.min(lim[1], Math.max(lim[0], value)) }
+        win.on('move', (x, y) => {
+            x_bound = [nw.Screen.screens[0].work_area.x, nw.Screen.screens[0].work_area.x + nw.Screen.screens[0].work_area.width - win.width]
+            y_bound = [nw.Screen.screens[0].work_area.y, nw.Screen.screens[0].work_area.y + nw.Screen.screens[0].work_area.height - win.height]
+            win.moveTo(limit(win.x, x_bound), limit(win.y, y_bound))
+        })
+        win.on('resize', (w, h) => {
+            x_bound = [nw.Screen.screens[0].work_area.x, nw.Screen.screens[0].work_area.x + nw.Screen.screens[0].work_area.width - win.width]
+            y_bound = [nw.Screen.screens[0].work_area.y, nw.Screen.screens[0].work_area.y + nw.Screen.screens[0].work_area.height - win.height]
+            win.moveTo(limit(win.x, x_bound), limit(win.y, y_bound))
+        })
+
+
+        // Helper Function For Test //////////////////////////////////////
+
+        var new_test_medid = 0
+        function addTestMedicineAtOnce() {
+            new_test_medid--
+            var test_medid = new_test_medid
+            var now = new Date()
+            var then = new Date(now.getTime() + 60 * 1000)
+            MedicineList.push([test_medid, '测试药' + test_medid, now.getHours(), now.getMinutes(), then.getHours(), then.getMinutes(), '1min后', no_limit])
+            addMedTip('测试药' + test_medid, then.getTime(), '1min后', test_medid)
+        }
+        function addTestMedicineToWaitingList() {
+            new_test_medid--
+            var test_medid = new_test_medid
+            var show = new Date(Date.now() + 60 * 1000)
+            var then = new Date(show.getTime() + 60 * 1000)
+            MedicineList.push([test_medid, '测试药' + test_medid, show.getHours(), show.getMinutes(), then.getHours(), then.getMinutes(), '1min后', no_limit])
+            wait_for_show.push([show, '测试药' + test_medid, then.getTime(), '1min后', test_medid])
+        }
+    </script>
+</body>
+
+</html>
